@@ -1,0 +1,13 @@
+version: "2"
+services:
+  nats:
+    image: nats
+    ports:
+      - 4222:4222
+      - 8222:8222
+  # claps:
+  #   build:
+  #     context: .
+  #   command: /claps -c nats -s nats:4222 -nc 500
+  #   links:
+  #     - nats
