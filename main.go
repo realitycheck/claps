@@ -14,18 +14,20 @@ import (
 
 var (
 	server   = "0.0.0.0:4222"
-	numClaps = 4
+	numConns = 4
 	rbuf     = 32768
 	wbuf     = 32768
 	timeout  = 2 * time.Second
+	debug    = false
 )
 
 func init() {
 	flag.StringVar(&server, "s", server, "Server to connect")
-	flag.IntVar(&numClaps, "nc", numClaps, "Number of connections")
+	flag.IntVar(&numConns, "nc", numConns, "Number of connections")
 	flag.IntVar(&rbuf, "rb", rbuf, "Size of read buffer")
 	flag.IntVar(&wbuf, "wb", wbuf, "Size of write buffer")
 	flag.DurationVar(&timeout, "timeout", timeout, "Connect timeout")
+	flag.BoolVar(&debug, "debug", debug, "Debug mode")
 }
 
 func main() {
@@ -36,14 +38,13 @@ func main() {
 		address = u.Host
 	}
 
-	var conns []*claps.NatsConn
+	conns := make([]*claps.NatsConn, numConns)
 	wg := sync.WaitGroup{}
-	wg.Add(numClaps)
-	for i := 0; i < numClaps; i++ {
-		nc := &claps.NatsConn{}
-		conns = append(conns, nc)
-		go func(id int) {
-			nc.Connect(id, address, rbuf, wbuf, timeout)
+	wg.Add(numConns)
+	for i := 0; i < numConns; i++ {
+		conns[i] = &claps.NatsConn{}
+		go func(i int) {
+			conns[i].Connect(i, address, rbuf, wbuf, timeout, debug)
 			wg.Done()
 		}(i)
 	}

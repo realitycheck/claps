@@ -22,35 +22,37 @@ type NatsConn struct {
 	bw   *bufio.Writer
 }
 
-func (nc *NatsConn) Connect(id int, address string, rbSize, wbSize int, connectTimeout time.Duration) {
+func (nc *NatsConn) Connect(CID int, address string, rbSize, wbSize int, connectTimeout time.Duration, debug bool) {
 reconnect:
 	err := nc.connect(address, rbSize, wbSize, connectTimeout)
 	if err != nil {
-		log.Printf("(%d): Can't connect to server: %s, reason: %s\n", id, address, err)
+		log.Printf("(%d): Can't connect to server: %s, reason: %s\n", CID, address, err)
 
 		jitter := time.Duration(1000*rand.Float32()) * time.Millisecond
-		log.Printf("(%d): Wait %s and reconnect\n", id, jitter)
+		log.Printf("(%d): Wait %s and reconnect\n", CID, jitter)
 		time.Sleep(jitter)
 
 		goto reconnect
 	}
-	log.Printf("(%d): Connected to server: %s, client: %s\n", id, address, nc.conn.LocalAddr())
+	log.Printf("(%d): Connected to server: %s, client: %s\n", CID, address, nc.conn.LocalAddr())
 
 	go func() {
 		defer func() {
-			log.Printf("(%d): Stop reading.\n", id)
-			nc.Connect(id, address, rbSize, wbSize, connectTimeout)
+			log.Printf("(%d): Stop reading.\n", CID)
+			nc.Connect(CID, address, rbSize, wbSize, connectTimeout, debug)
 		}()
 
-		log.Printf("(%d): Start reading...\n", id)
+		log.Printf("(%d): Start reading...\n", CID)
 		for {
 			op, args, err := nc.read(rbSize)
 			if err != nil {
-				log.Printf("(%d): Can't read from server, reason=%s\n", id, err)
+				log.Printf("(%d): Can't read from server, reason=%s\n", CID, err)
 				break
 			}
 
-			log.Printf("(%d): %s %s\n", id, op, args)
+			if debug {
+				log.Printf("(%d): %s %s\n", CID, op, args)
+			}
 
 			if op == "PING" {
 				nc.bw.WriteString(pongString)
