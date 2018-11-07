@@ -4,7 +4,7 @@ WORKDIR /go/src
 
 ADD . github.com/realitycheck/claps
 
-RUN CGO_ENABLED=0 GOOS=linux go install -a -installsuffix cgo github.com/realitycheck/claps/cmd/claps
+RUN CGO_ENABLED=0 GOOS=linux go install -a -installsuffix cgo github.com/realitycheck/claps
 
 FROM scratch
 
