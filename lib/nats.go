@@ -2,6 +2,7 @@ package claps
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"log"
 	"math/rand"
@@ -11,64 +12,96 @@ import (
 )
 
 const (
-	natsNetwork   = "tcp"
-	connectString = "CONNECT {\"verbose\": false}\r\n"
-	pingString    = "PING\r\n"
-	pongString    = "PONG\r\n"
+	natsNetwork    = "tcp"
+	connectCommand = "CONNECT {\"verbose\": false}\r\n"
+	pingCommand    = "PING\r\n"
+	pongCommand    = "PONG\r\n"
 )
 
 type NatsConn struct {
-	conn net.Conn
-	bw   *bufio.Writer
+	ID      int
+	Address string
+	Timeout time.Duration
+	Jitter  time.Duration
+	Debug   bool
+
+	conn      net.Conn
+	bw        *bufio.Writer
+	connected bool
 }
 
-func (nc *NatsConn) Connect(CID int, address string, rbSize, wbSize int, connectTimeout time.Duration, debug bool) {
-reconnect:
-	err := nc.connect(address, rbSize, wbSize, connectTimeout)
-	if err != nil {
-		log.Printf("(%d): Can't connect to server: %s, reason: %s\n", CID, address, err)
-
-		jitter := time.Duration(1000*rand.Float32()) * time.Millisecond
-		log.Printf("(%d): Wait %s and reconnect\n", CID, jitter)
-		time.Sleep(jitter)
-
-		goto reconnect
+func (nc *NatsConn) logDebugf(format string, v ...interface{}) {
+	if nc.Debug {
+		log.Printf(format, v...)
 	}
-	log.Printf("(%d): Connected to server: %s, client: %s\n", CID, address, nc.conn.LocalAddr())
+}
 
-	go func() {
-		defer func() {
-			log.Printf("(%d): Stop reading.\n", CID)
-			nc.Connect(CID, address, rbSize, wbSize, connectTimeout, debug)
-		}()
+func (nc *NatsConn) Connect(ctx context.Context) {
+	nc.logDebugf("(%d): Connecting to server: %s", nc.ID, nc.Address)
 
-		log.Printf("(%d): Start reading...\n", CID)
-		for {
-			op, args, err := nc.read(rbSize)
-			if err != nil {
-				log.Printf("(%d): Can't read from server, reason=%s\n", CID, err)
+	c := make(chan error)
+	r := make(chan command)
+	connect := func() { c <- nc.connect(nc.Address, nc.Timeout) }
+	read := func() { r <- nc.read() }
+
+	for {
+		if !nc.connected {
+			go connect()
+		} else {
+			go read()
+		}
+
+		select {
+		case <-ctx.Done():
+			if nc.conn != nil {
+				nc.logDebugf("(%d): Disconnecting, conn: %s", nc.ID, nc.conn.LocalAddr())
+				if err := nc.conn.Close(); err != nil {
+					log.Printf("(%d): Can't close the connection, reason=%s", nc.ID, err)
+				}
+			}
+			time.AfterFunc(nc.Timeout, func() {
+				close(c)
+				close(r)
+			})
+			<-c
+			<-r
+			nc.logDebugf("(%d): Disconnected.", nc.ID)
+			return
+		case c := <-r:
+			if c.err != nil {
+				log.Printf("(%d): Can't read from server, reason=%s", nc.ID, c.err)
+				nc.logDebugf("(%d): Stop reading.", nc.ID)
+				nc.connected = false
 				break
 			}
-
-			if debug {
-				log.Printf("(%d): %s %s\n", CID, op, args)
-			}
-
-			if op == "PING" {
-				nc.bw.WriteString(pongString)
+			nc.logDebugf("(%d): %s %s\n", nc.ID, c.op, c.args)
+			if c.op == "PING" {
+				nc.bw.WriteString(pongCommand)
 				nc.bw.Flush()
 			}
+		case err := <-c:
+			if err == nil {
+				nc.logDebugf("(%d): Connected to server: %s, conn: %s", nc.ID, nc.Address, nc.conn.LocalAddr())
+				nc.logDebugf("(%d): Start reading...", nc.ID)
+				nc.connected = true
+			} else {
+				log.Printf("(%d): Can't connect to server: %s, reason: %s", nc.ID, nc.Address, err)
+
+				jitter := time.Duration(1000*nc.Jitter.Seconds()*rand.Float64()) * time.Millisecond
+				log.Printf("(%d): Wait %s and reconnect", nc.ID, jitter)
+				time.Sleep(jitter)
+			}
 		}
-	}()
+	}
 }
 
-func (nc *NatsConn) connect(address string, rbSize, wbSize int, connectTimeout time.Duration) error {
+func (nc *NatsConn) connect(address string, timeout time.Duration) error {
 	if nc.conn != nil {
 		if err := nc.conn.Close(); err != nil {
 			return err
 		}
 	}
-	conn, err := net.Dial(natsNetwork, address)
+	conn, err := net.DialTimeout(natsNetwork, address, timeout)
 	if nc.conn = conn; err != nil {
 		return err
 	}
@@ -76,44 +109,43 @@ func (nc *NatsConn) connect(address string, rbSize, wbSize int, connectTimeout t
 	if nc.bw != nil {
 		nc.bw.Flush()
 	}
-	nc.bw = bufio.NewWriterSize(nc.conn, wbSize)
+	nc.bw = bufio.NewWriter(nc.conn)
 
-	nc.conn.SetDeadline(time.Now().Add(connectTimeout))
+	nc.conn.SetDeadline(time.Now().Add(timeout))
 	defer nc.conn.SetDeadline(time.Time{})
 
-	op, _, err := nc.read(rbSize)
-	if err != nil {
-		return err
+	c := nc.read()
+	if c.err != nil {
+		return c.err
+	} else if c.op != "INFO" {
+		return fmt.Errorf("nats: expected '%s', got '%s'", "INFO", c.op)
 	}
 
-	// The nats protocol should send INFO first always.
-	if op != "INFO" {
-		return fmt.Errorf("nats: expected '%s', got '%s'", "INFO", op)
-	}
-
-	nc.bw.WriteString(connectString)
-	nc.bw.WriteString(pingString)
+	nc.bw.WriteString(connectCommand)
+	nc.bw.WriteString(pingCommand)
 	nc.bw.Flush()
 
-	op, _, err = nc.read(rbSize)
-	if err != nil {
-		return err
-	}
-
-	if op != "PONG" {
-		return fmt.Errorf("nats: expected '%s', got '%s'", "PONG", op)
+	c = nc.read()
+	if c.err != nil {
+		return c.err
+	} else if c.op != "PONG" {
+		return fmt.Errorf("nats: expected '%s', got '%s'", "PONG", c.op)
 	}
 
 	return nil
 }
 
-func (nc *NatsConn) read(rbSize int) (string, string, error) {
+type command struct {
+	op, args string
+	err      error
+}
+
+func (nc *NatsConn) read() command {
 	var op, args string
 
-	br := bufio.NewReaderSize(nc.conn, rbSize)
-	line, err := br.ReadString('\n')
+	line, err := bufio.NewReader(nc.conn).ReadString('\n')
 	if err != nil {
-		return "", "", err
+		return command{err: err}
 	}
 
 	ss := strings.SplitN(line, " ", 2)
@@ -122,5 +154,5 @@ func (nc *NatsConn) read(rbSize int) (string, string, error) {
 	} else if len(ss) == 2 {
 		op, args = strings.TrimSpace(ss[0]), strings.TrimSpace(ss[1])
 	}
-	return op, args, nil
+	return command{op: op, args: args}
 }

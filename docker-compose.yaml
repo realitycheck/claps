@@ -8,6 +8,6 @@ services:
   claps:
     build:
       context: .
-    command: /claps -s nats://nats:4222 -nc 10000
+    command: /claps -s nats://nats:4222 -nc 1000 -debug
     links:
       - nats
