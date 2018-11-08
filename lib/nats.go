@@ -29,6 +29,8 @@ type NatsConn struct {
 	Debug   bool
 
 	conn net.Conn
+
+	bufInfo, bufPingPong []byte
 }
 
 func (nc *NatsConn) logDebugf(format string, v ...interface{}) {
@@ -40,20 +42,23 @@ func (nc *NatsConn) logDebugf(format string, v ...interface{}) {
 func (nc *NatsConn) Connect(ctx context.Context) {
 	nc.logDebugf("(%d): Connecting to server: %s", nc.ID, nc.Address)
 
+	nc.bufInfo = make([]byte, rbSizeInfo)
+	nc.bufPingPong = make([]byte, rbSizePingPong)
+
 	ok := make(chan struct{})
 	setOk := func() { ok <- struct{}{} }
 
-	mu := &sync.RWMutex{}
+	mu := &sync.Mutex{}
 	done := false
 	isDone := func() bool {
-		mu.RLock()
-		defer mu.RUnlock()
-		return done
-	}
-	setDone := func(b bool) {
 		mu.Lock()
 		defer mu.Unlock()
-		done = b
+		return done
+	}
+	setDone := func() {
+		mu.Lock()
+		defer mu.Unlock()
+		done = true
 	}
 
 	disconnect := func() {
@@ -76,10 +81,11 @@ func (nc *NatsConn) Connect(ctx context.Context) {
 				if err != nil {
 					if !isDone() {
 						log.Printf("(%d): Can't connect to server: %s, reason: %s", nc.ID, nc.Address, err)
+						disconnect()
+
 						jitter := time.Duration(1000*nc.Jitter.Seconds()*rand.Float64()) * time.Millisecond
 						log.Printf("(%d): Wait %s and reconnect", nc.ID, jitter)
 						time.Sleep(jitter)
-						disconnect()
 					}
 					return
 				}
@@ -87,7 +93,7 @@ func (nc *NatsConn) Connect(ctx context.Context) {
 				nc.logDebugf("(%d): Start reading...", nc.ID)
 			}
 
-			op, args, err := nc.read(rbSizePingPong)
+			op, args, err := nc.read(nc.bufPingPong)
 			if err != nil {
 				if !isDone() {
 					log.Printf("(%d): Can't read from server, reason=%s", nc.ID, err)
@@ -105,7 +111,7 @@ func (nc *NatsConn) Connect(ctx context.Context) {
 
 		select {
 		case <-ctx.Done():
-			setDone(true)
+			setDone()
 			disconnect()
 			<-ok
 			return
@@ -122,7 +128,7 @@ func (nc *NatsConn) connect(address string, timeout time.Duration) error {
 
 	nc.conn.SetDeadline(time.Now().Add(timeout))
 	defer nc.conn.SetDeadline(time.Time{})
-	op, _, err := nc.read(rbSizeInfo)
+	op, _, err := nc.read(nc.bufInfo)
 	if err != nil {
 		return err
 	} else if op != "INFO" {
@@ -130,7 +136,7 @@ func (nc *NatsConn) connect(address string, timeout time.Duration) error {
 	}
 
 	nc.conn.Write([]byte(connectCommand + pingCommand))
-	op, _, err = nc.read(rbSizePingPong)
+	op, _, err = nc.read(nc.bufPingPong)
 	if err != nil {
 		return err
 	} else if op != "PONG" {
@@ -140,16 +146,15 @@ func (nc *NatsConn) connect(address string, timeout time.Duration) error {
 	return nil
 }
 
-func (nc *NatsConn) read(rblen int) (string, string, error) {
+func (nc *NatsConn) read(buf []byte) (string, string, error) {
 	var op, args string
 
-	rb := make([]byte, rblen)
-	n, err := nc.conn.Read(rb)
+	n, err := nc.conn.Read(buf)
 	if err != nil {
 		return "", "", err
 	}
 
-	line := string(rb[:n])
+	line := string(buf[:n])
 	ss := strings.SplitN(line, " ", 2)
 	if len(ss) == 1 {
 		op = strings.TrimSpace(ss[0])
