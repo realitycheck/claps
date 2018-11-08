@@ -65,11 +65,10 @@ func main() {
 		}()
 	}
 
-	wait := make(chan os.Signal, 1)
-	signal.Notify(wait, syscall.SIGINT, syscall.SIGTERM)
-	<-wait
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	<-stop
 
 	cancel()
-
 	wg.Wait()
 }
