@@ -27,7 +27,8 @@
 
 [[constraint]]
   name = "github.com/centrifugal/centrifuge-go"
-  version = "0.2.0"
+  branch = "master"
+  source = "github.com/realitycheck/centrifuge-go"
 
 [prune]
   go-tests = true
