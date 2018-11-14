@@ -5,9 +5,20 @@ services:
     ports:
       - 4222:4222
       - 8222:8222
-  claps:
+  nats.test:
     build:
       context: .
-    command: /claps -s nats://nats:4222 -nc 1000 -debug
+    command: -t nats -s nats://nats:4222 -nc 1000 -debug
     links:
       - nats
+  cent:
+    image: centrifugo/centrifugo
+    ports:
+      - 8000:8000
+    command: centrifugo --admin --admin_insecure --client_insecure --api_insecure --debug
+  cent.test:
+    build:
+      context: .
+    command: -t cent -s ws://cent:8000/connection/websocket -nc 1000 -debug
+    links:
+      - cent

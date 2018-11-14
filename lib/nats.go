@@ -21,6 +21,7 @@ const (
 	rbSizeInfo     = 256
 )
 
+// NatsConn represents a connection to NATS server.
 type NatsConn struct {
 	ID      int
 	Address string
@@ -39,6 +40,7 @@ func (nc *NatsConn) logDebugf(format string, v ...interface{}) {
 	}
 }
 
+// Connect to NATS server
 func (nc *NatsConn) Connect(ctx context.Context) {
 	nc.logDebugf("(%d): Connecting to server: %s", nc.ID, nc.Address)
 
