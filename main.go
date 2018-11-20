@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"net/url"
@@ -28,6 +29,7 @@ var (
 const (
 	typeCent = "cent"
 	typeNats = "nats"
+	typeWs   = "ws"
 )
 
 func init() {
@@ -93,6 +95,14 @@ func newClap(ID int) clap {
 			URL:     server,
 			Debug:   debug,
 			Timeout: timeout,
+		}
+	case typeWs:
+		return &claps.WsConn{
+			ID:      ID,
+			URL:     fmt.Sprintf("%s/%d", server, ID),
+			Debug:   debug,
+			Timeout: timeout,
+			Jitter:  jitter,
 		}
 	}
 

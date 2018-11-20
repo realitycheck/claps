@@ -1,6 +1,12 @@
 version: "2"
 services:
-  nats:
+  claps:
+    image: golang
+    volumes:
+      - .:/go/src/github.com/realitycheck/claps
+    working_dir: /go/src/github.com/realitycheck/claps
+    command: go run main.go
+  nats.server:
     image: nats
     ports:
       - 4222:4222
@@ -8,10 +14,9 @@ services:
   nats.test:
     build:
       context: .
-    command: -t nats -s nats://nats:4222 -nc 1000 -debug
-    links:
-      - nats
-  cent:
+    command: -t nats -s nats://nats.server:4222 -nc 1000 -debug
+    links: ["nats.server"]
+  cent.server:
     image: centrifugo/centrifugo
     ports:
       - 8000:8000
@@ -19,6 +24,19 @@ services:
   cent.test:
     build:
       context: .
-    command: -t cent -s ws://cent:8000/connection/websocket -nc 1000 -debug
-    links:
-      - cent
+    command: -t cent -s ws://cent.server:8000/connection/websocket -nc 1000 -debug
+    links: ["cent"]
+  ws.server:
+    build: 
+      context: 
+        ./docker/nginx
+    volumes: 
+      - ./docker/nginx:/data:ro
+    ports:
+      - 8080:8080
+    command: nginx -c /data/nginx.conf -g "daemon off;"
+  ws.test:
+    build: 
+      context: .   
+    command: -t ws -s ws://ws.server:8080/ws -nc 1000 -debug
+    links: ["ws.server"]
