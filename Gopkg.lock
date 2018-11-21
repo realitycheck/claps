@@ -44,6 +44,9 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  input-imports = ["github.com/centrifugal/centrifuge-go"]
+  input-imports = [
+    "github.com/centrifugal/centrifuge-go",
+    "github.com/gorilla/websocket",
+  ]
   solver-name = "gps-cdcl"
   solver-version = 1
