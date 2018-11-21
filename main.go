@@ -17,19 +17,19 @@ import (
 )
 
 var (
-	server     = "0.0.0.0:4222"
-	numConns   = 4
-	timeout    = 2 * time.Second
-	debug      = false
-	quiet      = false
-	jitter     = 1 * time.Second
-	serverType = typeNats
+	server   = "0.0.0.0:4222"
+	numConns = 4
+	timeout  = 2 * time.Second
+	debug    = false
+	quiet    = false
+	jitter   = 1 * time.Second
+	connType = connNats
 )
 
 const (
-	typeCent = "cent"
-	typeNats = "nats"
-	typeWs   = "ws"
+	connCent = "cent"
+	connNats = "nats"
+	connWs   = "ws"
 )
 
 func init() {
@@ -39,7 +39,7 @@ func init() {
 	flag.BoolVar(&debug, "debug", debug, "Debug mode, enable for verbose logging (default false)")
 	flag.BoolVar(&quiet, "quiet", quiet, "Quiet mode, enable to log nothing (default false)")
 	flag.DurationVar(&jitter, "jitter", jitter, "Jitter duration")
-	flag.StringVar(&serverType, "t", serverType, "Server type")
+	flag.StringVar(&connType, "t", connType, "Type of connections (cent, nats or ws)")
 }
 
 func main() {
@@ -51,12 +51,12 @@ func main() {
 	}
 
 	ctx, stop := context.WithCancel(context.Background())
-	conns := make([]clap, numConns)
+	conns := make([]conn, numConns)
 	wg := sync.WaitGroup{}
 	wg.Add(numConns)
 	for i := 0; i < numConns; i++ {
-		conns[i] = newClap(i)
-		go func(c clap) {
+		conns[i] = newConn(i)
+		go func(c conn) {
 			c.Connect(ctx)
 			wg.Done()
 		}(conns[i])
@@ -70,18 +70,18 @@ func main() {
 	wg.Wait()
 }
 
-type clap interface {
+type conn interface {
 	Connect(context.Context)
 }
 
-func newClap(ID int) clap {
+func newConn(ID int) conn {
 	address := server
 	if u, err := url.Parse(server); err == nil {
 		address = u.Host
 	}
 
-	switch serverType {
-	case typeNats:
+	switch connType {
+	case connNats:
 		return &claps.NatsConn{
 			ID:      ID,
 			Address: address,
@@ -89,14 +89,14 @@ func newClap(ID int) clap {
 			Debug:   debug,
 			Jitter:  jitter,
 		}
-	case typeCent:
+	case connCent:
 		return &claps.CentConn{
 			ID:      ID,
 			URL:     server,
 			Debug:   debug,
 			Timeout: timeout,
 		}
-	case typeWs:
+	case connWs:
 		return &claps.WsConn{
 			ID:      ID,
 			URL:     fmt.Sprintf("%s/%d", server, ID),
