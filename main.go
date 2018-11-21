@@ -39,7 +39,7 @@ func init() {
 	flag.BoolVar(&debug, "debug", debug, "Debug mode, enable for verbose logging (default false)")
 	flag.BoolVar(&quiet, "quiet", quiet, "Quiet mode, enable to log nothing (default false)")
 	flag.DurationVar(&jitter, "jitter", jitter, "Jitter duration")
-	flag.StringVar(&connType, "t", connType, "Type of connections (cent, nats or ws)")
+	flag.StringVar(&connType, "c", connType, "Type of connections (cent, nats or ws)")
 }
 
 func main() {

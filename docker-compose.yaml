@@ -14,7 +14,7 @@ services:
   nats.test:
     build:
       context: .
-    command: -s nats://nats.server:4222 -t nats -nc 1000 -debug
+    command: -s nats://nats.server:4222 -c nats -nc 1000 -debug
     links: ["nats.server"]
   cent.server:
     image: centrifugo/centrifugo
@@ -24,7 +24,7 @@ services:
   cent.test:
     build:
       context: .
-    command: -s ws://cent.server:8000/connection/websocket -t cent -nc 1000 -debug
+    command: -s ws://cent.server:8000/connection/websocket -c cent -nc 1000 -debug
     links: ["cent.server"]
   ws.server:
     build: 
@@ -38,5 +38,5 @@ services:
   ws.test:
     build: 
       context: .   
-    command: -s ws://ws.server:8080/ws -t ws -nc 1000 -debug
+    command: -s ws://ws.server:8080/ws -c ws -nc 1000 -debug
     links: ["ws.server"]
