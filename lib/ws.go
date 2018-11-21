@@ -2,9 +2,6 @@ package claps
 
 import (
 	"context"
-	"log"
-	"math/rand"
-	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -21,99 +18,73 @@ var dialer = &websocket.Dialer{
 
 // WsConn represents a connection to generic WebSocket server.
 type WsConn struct {
-	ID      int
-	URL     string
-	Timeout time.Duration
-	Debug   bool
-	Jitter  time.Duration
+	Options
 
 	conn *websocket.Conn
 }
 
-func (c *WsConn) logDebugf(format string, v ...interface{}) {
-	if c.Debug {
-		log.Printf(format, v...)
-	}
-}
-
 // Connect to WebSocket server
 func (c *WsConn) Connect(ctx context.Context) {
-	c.logDebugf("(%d): Connecting to server: %s", c.ID, c.URL)
+	c.debug("(%d): Connecting to server: %s", c.ID, c.Address)
 
-	ok := make(chan struct{})
-	setOk := func() { ok <- struct{}{} }
-
-	mu := &sync.Mutex{}
-	done := false
-	isDone := func() bool {
-		mu.Lock()
-		defer mu.Unlock()
-		return done
-	}
-	setDone := func() {
-		mu.Lock()
-		defer mu.Unlock()
-		done = true
-	}
-
-	disconnect := func() {
-		if c.conn != nil {
-			c.logDebugf("(%d): Closing the connection: %s", c.ID, c.conn.LocalAddr())
-			if err := c.conn.Close(); err != nil {
-				log.Printf("(%d): Can't close the connection, reason=%s", c.ID, err)
-			}
-			c.logDebugf("(%d): Disconnected", c.ID)
-			c.conn = nil
-		}
-	}
-
+	wait := make(chan struct{})
 	for {
 		go func() {
-			defer setOk()
+			defer func() {
+				wait <- struct{}{}
+			}()
 
 			if c.conn == nil {
-				ctx, cancel := context.WithDeadline(ctx, time.Now().Add(c.Timeout))
-				defer cancel()
-				
-				conn, _, err := dialer.DialContext(ctx, c.URL, nil)
+				dctx, cancel := context.WithDeadline(ctx, time.Now().Add(c.Timeout))
+				conn, _, err := dialer.DialContext(dctx, c.Address, nil)
+				cancel()
 				if err != nil {
-					if !isDone() {
-						log.Printf("(%d): Can't connect to server: %s, reason: %s", c.ID, c.URL, err)
-						disconnect()
-
-						jitter := time.Duration(1000*c.Jitter.Seconds()*rand.Float64()) * time.Millisecond
-						log.Printf("(%d): Wait %s and reconnect", c.ID, jitter)
-						time.Sleep(jitter)
+					select {
+					case <-ctx.Done():
+					default:
+						c.log("(%d): Can't connect to server: %s, reason: %s", c.ID, c.Address, err)
+						if c.conn != nil {
+							c.disconnect(c.conn)
+							c.conn = nil
+						}
+						c.jitter()
 					}
 					return
 				}
 				c.conn = conn
-				c.logDebugf("(%d): Connected to server: %s, conn: %s", c.ID, c.URL, c.conn.LocalAddr())
-				c.logDebugf("(%d): Start reading...", c.ID)
+				c.debug("(%d): Connected to server: %s, addr: %s", c.ID, c.Address, c.conn.LocalAddr())
+				c.debug("(%d): Start reading...", c.ID)
 			}
 
 			c.conn.SetReadLimit(maxMessageSize)
-
 			_, message, err := c.conn.ReadMessage()
 			if err != nil {
-				if !isDone() {
-					log.Printf("(%d): Can't read from server, reason=%s", c.ID, err)
-					c.logDebugf("(%d): Stop reading", c.ID)
-					disconnect()
+				select {
+				case <-ctx.Done():
+				default:
+					c.log("(%d): Can't read from server, reason=%s", c.ID, err)
+					c.debug("(%d): Stop reading", c.ID)
+					if c.conn != nil {
+						c.disconnect(c.conn)
+						c.conn = nil
+					}
+					c.jitter()
 				}
 				return
 			}
 
-			c.logDebugf("(%d): Message received: %s", c.ID, message)
+			c.debug("(%d): Message received: %s", c.ID, message)
 		}()
 
 		select {
 		case <-ctx.Done():
-			setDone()
-			disconnect()
-			<-ok
+			if c.conn != nil {
+				c.disconnect(c.conn)
+				c.conn = nil
+			}
+			<-wait
 			return
-		case <-ok:
+		case <-wait:
 		}
 	}
 

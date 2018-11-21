@@ -2,35 +2,25 @@ package claps
 
 import (
 	"context"
-	"log"
-	"time"
 
 	"github.com/centrifugal/centrifuge-go"
 )
 
 // CentConn represents a connection to Centrifugo server.
 type CentConn struct {
-	ID      int
-	URL     string
-	Debug   bool
-	Timeout time.Duration
+	Options
 
 	cli *centrifuge.Client
 }
 
-func (c *CentConn) logDebugf(format string, v ...interface{}) {
-	if c.Debug {
-		log.Printf(format, v...)
-	}
-}
-
 // Connect to Centrifugo server
 func (c *CentConn) Connect(ctx context.Context) {
-	config := centrifuge.DefaultConfig()
-	config.ReadTimeout = c.Timeout
-	config.WriteTimeout = c.Timeout
+	c.debug("(%d): Connecting to server: %s", c.ID, c.Address)
 
-	c.cli = centrifuge.New(c.URL, config)
+	config := centrifuge.DefaultConfig()
+	config.HandshakeTimeout = c.Timeout
+
+	c.cli = centrifuge.New(c.Address, config)
 	defer c.cli.Close()
 
 	c.cli.OnConnect(c)
@@ -40,7 +30,7 @@ func (c *CentConn) Connect(ctx context.Context) {
 	go func() {
 		err := c.cli.Connect()
 		if err != nil {
-			log.Printf("(%d): Can't connect to server: %s, reason: %s", c.ID, c.URL, err)
+			c.log("(%d): Can't connect to server: %s, reason: %s", c.ID, c.Address, err)
 		}
 	}()
 
@@ -53,15 +43,15 @@ func (c *CentConn) Connect(ctx context.Context) {
 }
 
 func (c *CentConn) OnConnect(cli *centrifuge.Client, e centrifuge.ConnectEvent) {
-	c.logDebugf("(%d): Connected to server: %s", c.ID, c.URL)
+	c.debug("(%d): Connected to server: %s", c.ID, c.Address)
 }
 
 func (c *CentConn) OnDisconnect(cli *centrifuge.Client, e centrifuge.DisconnectEvent) {
 	if !e.Reconnect {
-		c.logDebugf("(%d): Disconnected", c.ID)
+		c.debug("(%d): Disconnected", c.ID)
 	}
 }
 
 func (c *CentConn) OnError(cli *centrifuge.Client, e centrifuge.ErrorEvent) {
-	log.Printf("(%d): %s", c.ID, e.Message)
+	c.log("(%d): %s", c.ID, e.Message)
 }

@@ -83,27 +83,35 @@ func newConn(ID int) conn {
 	switch connType {
 	case connNats:
 		return &claps.NatsConn{
-			ID:      ID,
-			Address: address,
-			Timeout: timeout,
-			Debug:   debug,
-			Jitter:  jitter,
+			Options: claps.Options{
+				ID:      ID,
+				Address: address,
+				Timeout: timeout,
+				Debug:   debug,
+				Jitter:  jitter,
+			},
 		}
 	case connCent:
 		return &claps.CentConn{
-			ID:      ID,
-			URL:     server,
-			Debug:   debug,
-			Timeout: timeout,
+			Options: claps.Options{
+				ID:      ID,
+				Address: server,
+				Debug:   debug,
+				Timeout: timeout,
+			},
 		}
 	case connWs:
 		return &claps.WsConn{
-			ID:      ID,
-			URL:     fmt.Sprintf("%s/%d", server, ID),
-			Debug:   debug,
-			Timeout: timeout,
-			Jitter:  jitter,
+			Options: claps.Options{
+				ID:      ID,
+				Address: fmt.Sprintf("%s/%d", server, ID),
+				Debug:   debug,
+				Timeout: timeout,
+				Jitter:  jitter,
+			},
 		}
+	default:
+		log.Fatalf("Unknown connection type: %s", connType)
 	}
 
 	return nil

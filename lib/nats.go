@@ -3,11 +3,8 @@ package claps
 import (
 	"context"
 	"fmt"
-	"log"
-	"math/rand"
 	"net"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -23,89 +20,62 @@ const (
 
 // NatsConn represents a connection to NATS server.
 type NatsConn struct {
-	ID      int
-	Address string
-	Timeout time.Duration
-	Jitter  time.Duration
-	Debug   bool
+	Options
 
-	conn net.Conn
-
+	conn                 net.Conn
 	bufInfo, bufPingPong []byte
-}
-
-func (c *NatsConn) logDebugf(format string, v ...interface{}) {
-	if c.Debug {
-		log.Printf(format, v...)
-	}
 }
 
 // Connect to NATS server
 func (c *NatsConn) Connect(ctx context.Context) {
-	c.logDebugf("(%d): Connecting to server: %s", c.ID, c.Address)
+	c.debug("(%d): Connecting to server: %s", c.ID, c.Address)
 
 	c.bufInfo = make([]byte, rbSizeInfo)
 	c.bufPingPong = make([]byte, rbSizePingPong)
 
-	ok := make(chan struct{})
-	setOk := func() { ok <- struct{}{} }
-
-	mu := &sync.Mutex{}
-	done := false
-	isDone := func() bool {
-		mu.Lock()
-		defer mu.Unlock()
-		return done
-	}
-	setDone := func() {
-		mu.Lock()
-		defer mu.Unlock()
-		done = true
-	}
-
-	disconnect := func() {
-		if c.conn != nil {
-			c.logDebugf("(%d): Closing the connection: %s", c.ID, c.conn.LocalAddr())
-			if err := c.conn.Close(); err != nil {
-				log.Printf("(%d): Can't close the connection, reason=%s", c.ID, err)
-			}
-			c.logDebugf("(%d): Disconnected", c.ID)
-			c.conn = nil
-		}
-	}
-
+	wait := make(chan struct{})
 	for {
 		go func() {
-			defer setOk()
+			defer func() {
+				wait <- struct{}{}
+			}()
 
 			if c.conn == nil {
 				err := c.connect(c.Address, c.Timeout)
 				if err != nil {
-					if !isDone() {
-						log.Printf("(%d): Can't connect to server: %s, reason: %s", c.ID, c.Address, err)
-						disconnect()
-
-						jitter := time.Duration(1000*c.Jitter.Seconds()*rand.Float64()) * time.Millisecond
-						log.Printf("(%d): Wait %s and reconnect", c.ID, jitter)
-						time.Sleep(jitter)
+					select {
+					case <-ctx.Done():
+					default:
+						c.log("(%d): Can't connect to server: %s, reason: %s", c.ID, c.Address, err)
+						if c.conn != nil {
+							c.disconnect(c.conn)
+							c.conn = nil
+						}
+						c.jitter()
 					}
 					return
 				}
-				c.logDebugf("(%d): Connected to server: %s, conn: %s", c.ID, c.Address, c.conn.LocalAddr())
-				c.logDebugf("(%d): Start reading...", c.ID)
+				c.debug("(%d): Connected to server: %s, addr: %s", c.ID, c.Address, c.conn.LocalAddr())
+				c.debug("(%d): Start reading...", c.ID)
 			}
 
 			op, args, err := c.read(c.bufPingPong)
 			if err != nil {
-				if !isDone() {
-					log.Printf("(%d): Can't read from server, reason=%s", c.ID, err)
-					c.logDebugf("(%d): Stop reading", c.ID)
-					disconnect()
+				select {
+				case <-ctx.Done():
+				default:
+					c.log("(%d): Can't read from server, reason=%s", c.ID, err)
+					c.debug("(%d): Stop reading", c.ID)
+					if c.conn != nil {
+						c.disconnect(c.conn)
+						c.conn = nil
+					}
+					c.jitter()
 				}
 				return
 			}
 
-			c.logDebugf("(%d): %s %s\n", c.ID, op, args)
+			c.debug("(%d): %s %s\n", c.ID, op, args)
 			if op == "PING" {
 				c.conn.Write([]byte(pongCommand))
 			}
@@ -113,11 +83,13 @@ func (c *NatsConn) Connect(ctx context.Context) {
 
 		select {
 		case <-ctx.Done():
-			setDone()
-			disconnect()
-			<-ok
+			if c.conn != nil {
+				c.disconnect(c.conn)
+				c.conn = nil
+			}
+			<-wait
 			return
-		case <-ok:
+		case <-wait:
 		}
 	}
 }
